@@ -40,3 +40,10 @@ def parse_date(text: str | None) -> date | None:
         return date.fromisoformat(text[:10])
     except ValueError:
         return None
+
+
+def to_utc_naive(value: datetime) -> datetime:
+    """事件时间入库口径：带时区 → 转 UTC naive；naive → 按业务时区（UTC+8）解释后转 UTC naive。"""
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value - timedelta(minutes=settings.app_timezone_offset_minutes)

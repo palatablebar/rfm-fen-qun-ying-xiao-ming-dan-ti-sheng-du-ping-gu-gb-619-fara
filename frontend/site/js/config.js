@@ -29,7 +29,8 @@ export const NAV = [
   { to: '#/members', no: '02', label: '会员与订单', permission: 'member:read' },
   { to: '#/segments', no: '03', label: 'RFM 分群', permission: 'segment:read' },
   { to: '#/audiences', no: '04', label: '名单与提升度', permission: 'audience:read' },
-  { to: '#/exports', no: '05', label: '导出与审计', permission: 'member:read' },
+  { to: '#/compliance', no: '05', label: '合规复核', permission: 'compliance:read' },
+  { to: '#/exports', no: '06', label: '导出与审计', permission: 'member:read' },
 ];
 
 export const ROLE_LABELS = {
@@ -42,13 +43,17 @@ export const PERMISSIONS = {
   admin: [
     'overview:read', 'member:read', 'order:read', 'segment:read', 'segment:recompute', 'segment:write',
     'campaign:read', 'campaign:write', 'audience:read', 'audience:generate', 'audience:confirm',
+    'consent:read', 'consent:write', 'compliance:read', 'compliance:review', 'compliance:publish',
     'export:read', 'audit:read',
   ],
   analyst: [
     'overview:read', 'member:read', 'order:read', 'segment:read', 'campaign:read',
-    'audience:read', 'audience:confirm', 'export:read',
+    'audience:read', 'audience:confirm', 'consent:read', 'compliance:read', 'compliance:review', 'export:read',
   ],
-  viewer: ['overview:read', 'member:read', 'order:read', 'segment:read', 'campaign:read', 'audience:read'],
+  viewer: [
+    'overview:read', 'member:read', 'order:read', 'segment:read', 'campaign:read', 'audience:read',
+    'consent:read', 'compliance:read',
+  ],
 };
 
 export const ENUMS = {
@@ -100,6 +105,39 @@ export const ENUMS = {
     allocated: '已分配',
     deferred: '预算不足',
     ineligible: 'lift≤1 不投',
+  },
+  consentChannel: {
+    sms: '短信',
+    app: 'APP 推送',
+    all: '全渠道',
+  },
+  consentAction: {
+    unsubscribed: '短信退订',
+    opted_out: 'APP 关闭营销通知',
+    complained: '投诉',
+    subscribed: '恢复授权',
+  },
+  consentStatus: {
+    sendable: '可发',
+    blocked: '屏蔽',
+  },
+  eventDisposition: {
+    applied: '已生效',
+    late_ignored: '迟到忽略',
+  },
+  reviewStatus: {
+    sendable: '可发',
+    excluded: '已剔除',
+  },
+  memberSource: {
+    base: '原始分配',
+    backfill: '合规补位',
+  },
+  excludeReason: {
+    complained: '投诉黑名单',
+    multi_blocked: '多渠道屏蔽',
+    sms_unsubscribed: '短信退订',
+    app_opted_out: 'APP 关闭营销通知',
   },
   windowDays: [
     { value: 90, label: '近 90 天' },

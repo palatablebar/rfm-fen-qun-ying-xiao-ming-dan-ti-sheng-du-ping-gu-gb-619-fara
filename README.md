@@ -20,21 +20,23 @@
   4. 09:40 在「名单与提升度」选「秋日会员日券」，把预算从 1,400 改成 2,000，试算看到哪几个分群被优先分配、哪几个「预算不足」。
   5. 10:00 点「生成名单」，得到 A2026111401：覆盖 X 人、券预算 Y 元、预计增量 Z 单、整体 ROI R。
   6. 10:10 数据专员点「确认名单」，管理员在「导出与审计」下载名单明细 CSV，交给券平台。
-  7. 14:00 门店只读角色登录，只能看到脱敏手机号，导出按钮置灰；直接调 `/api/exports/members.csv` 返回 403。
-  8. 次日 07:40 Celery worker 定时重算 RFM 并为进行中活动补一份名单，审计日志留痕。
+  7. 10:20 短信退订 / APP 关闭 / 投诉批次到达，管理员导入后在「合规复核」执行复核：按会员 × 渠道 × 事件时间归并，
+     剔除不可发会员并补足预算内人数，发布 v1 固定可发名单与剔除原因；已排期活动按当前版本照常下发。
+  8. 14:00 门店只读角色登录，只能看到脱敏手机号，导出按钮置灰；直接调 `/api/exports/members.csv` 返回 403。
+  9. 次日 07:40 Celery worker 定时重算 RFM 并为进行中活动补一份名单，审计日志留痕。
 
 ## 2. 角色与权限
 
 | 角色 | 账号 | 权限 | 典型动作 |
 |---|---|---|---|
-| 会员运营管理员 `admin` | `admin@rfmseg.io` | 配置 + 重算 + 生成名单 + 导出 + 审计 | 调 RFM 权重/窗口、改分群券面额、生成名单、导出、看审计 |
-| 会员数据专员 `analyst` | `analyst@rfmseg.io` | 看分群与 lift、确认名单、导出 | 试算预算、确认名单、导出分群表 |
-| 门店业务只读 `viewer` | `viewer@rfmseg.io` | 只读列表与详情（手机号脱敏） | 看分群、看会员、看名单；写/导出/审计一律 403 |
+| 会员运营管理员 `admin` | `admin@rfmseg.io` | 配置 + 重算 + 生成名单 + 导入授权事件 + 复核发布 + 导出 + 审计 | 调 RFM 权重/窗口、改分群券面额、生成名单、导入退订批次、执行复核、发布可发名单、导出、看审计 |
+| 会员数据专员 `analyst` | `analyst@rfmseg.io` | 看分群与 lift、确认名单、执行复核、导出 | 试算预算、确认名单、发送前合规复核、导出分群表 |
+| 门店业务只读 `viewer` | `viewer@rfmseg.io` | 只读列表与详情（手机号脱敏） | 看分群、看会员、看名单、看复核结果；写/导出/审计一律 403 |
 
 密码统一：`Demo@2026`。低权角色调用高权接口返回 **真实 HTTP 403**（`src/middlewares/rbac.py`，不靠前端隐藏）。
 未登录 401（`AUTH_MISSING`）、参数非法 422（`VALIDATION`）、重复自然键 409（`CONFLICT`）。
 
-## 3. 业务模块表（6 个）
+## 3. 业务模块表（7 个）
 
 | # | 模块 | 对应页面 | 主要 services / controller | 主要 API |
 |---|---|---|---|---|
@@ -43,7 +45,8 @@
 | ③ | 分群规则与券口径 | RFM 分群 `#/segments` | `segment_service` / `segment_controller` | `PATCH /api/segments/{id}` |
 | ④ | 名单生成（算法 B 落库） | 名单与提升度 `#/audiences` | `audience_service` / `audience_controller` | `POST /api/audiences`、`GET /api/audiences`、`PATCH /api/audiences/{id}/review` |
 | ⑤ | 提升度与预算分配（算法 B） | 名单与提升度 `#/audiences` | `lift_service`、`audience_service` / `campaign_controller` | `GET /api/campaigns`、`POST /api/campaigns`、`GET /api/campaigns/{id}/allocation` |
-| ⑥ | 导出与审计 | 导出与审计 `#/exports` | `export_service`、`audit_service` / `export_controller` | `GET /api/exports/{members,segments,audiences}.csv`、`GET /api/audit` |
+| ⑥ | 发送前合规复核（算法 C） | 合规复核 `#/compliance` | `consent_service`、`compliance_service`、`compliance_rules` / `consent_controller`、`compliance_controller` | `POST /api/consents/events`、`GET /api/consents/summary`、`POST /api/audiences/{id}/compliance/review`、`POST /api/audiences/{id}/compliance/publish` |
+| ⑦ | 导出与审计 | 导出与审计 `#/exports` | `export_service`、`audit_service` / `export_controller` | `GET /api/exports/{members,segments,audiences,compliance}.csv`、`GET /api/audit` |
 
 横切能力（不计入业务模块）：JWT + 三角色 RBAC、限流（Redis 固定窗口，写接口单独额度）、审计中间件、worker 心跳。
 登录页与总览是横切入口，也不算业务模块。
@@ -143,6 +146,24 @@ docker-compose.yml  .env  README.md
    增量单量 = 增量人数 × `orders_per_converter`（默认 1.4）；增量 GMV = 增量单量 × 分群客单价（订单事实算出）。
 7. `ROI = 增量 GMV / 该群券预算`；整体 ROI = 总增量 GMV / 总花费。页面对每个分群展示这一整条推导。
 
+### 算法 C｜发送前合规复核（`backend/src/services/compliance_rules.py`）
+
+短信退订、APP 关闭营销通知、投诉名单每天分批到达（`POST /api/consents/events`），名单确认后还会从分群重导会员，
+已排期活动按已发布版本照常下发。发送前的合规口径：
+
+1. **授权归并**：按（会员 × 渠道）归并，**事件时间最晚的事件决定当前状态**（`member_consents`）。
+   - 重复事件（`event_id 相同`）幂等忽略，不进流水；
+   - 迟到事件（`event_time ≤ 当前生效时间`）记入流水但标记 `late_ignored`，**不能恢复已退订**；
+   - 只有事件时间更晚的「恢复授权」才能把状态改回可发。
+2. **渠道判定**：投诉走全渠道（`all`）屏蔽；短信退订只屏蔽 `sms`；APP 关闭只屏蔽 `app`。
+   发送渠道为 `all` 时任一渠道被屏蔽即不可发；剔除主因优先级：投诉 > 多渠道 > 短信退订 > APP 关闭。
+3. **复核（未发布名单）**：剔除不可发会员（只标记不删除，保留剔除原因），再按分群配额从合规候选中
+   补位（同群优先、跨群兜底），**补足预算内人数**；候选不足记 `shortage`。
+   `(audience_id, member_id)` 唯一约束 + 在册过滤，**重试不重复补位**；每一轮复核落 `audience_reviews` 留痕。
+4. **发布**：把当前工作区固化为 `audience_publishes` 快照（可发名单 + 剔除原因 + 分渠道计数）。
+   换版在单事务内「旧版下架 + 新版上架」，**失败回滚保留旧版**；已推送券平台（pushed）的名单不能再复核。
+5. **核对**：页面与 `compliance.csv` 导出都给出可发 / 剔除 / 补位人数，并分短信、APP 与全渠道三栏核对。
+
 ### seed 数量口径（`SEED_SUMMARY`）
 
 `SEED_SUMMARY brand=rfmseg users=3 sources=8000 runs=30000 findings=8 pending=2`
@@ -155,6 +176,9 @@ docker-compose.yml  .env  README.md
 | `findings` | RFM 分群数（8） |
 | `pending` | 待确认名单数（2，对应 2 个活动） |
 
+seed 同时落 3 个批次的授权事件（短信退订 / APP 关闭 / 投诉，含迟到与重复样例）、对 2 份名单各做一轮合规复核，
+并为「秋日会员日券」发布 v1 版本（演示已排期活动按已发布版本照常下发）；这些不计入 `SEED_SUMMARY` 行，重跑幂等。
+
 ## 11. 共享枚举出现位置
 
 | 枚举 | 后端 | 前端 |
@@ -166,6 +190,9 @@ docker-compose.yml  .env  README.md
 | 名单状态 `pending/confirmed/pushed` | `backend/src/constants/enums.py` → `AudienceStatus` | `frontend/site/js/config.js` → `ENUMS.audienceStatus` |
 | 订单渠道 `miniapp/store/delivery` | `backend/src/constants/enums.py` → `OrderChannel` | `frontend/site/js/config.js` → `ENUMS.channel` |
 | 分配状态 `allocated/deferred/ineligible` | `backend/src/services/lift_service.py` | `frontend/site/js/config.js` → `ENUMS.allocationStatus` |
+| 授权渠道 `sms/app/all` | `backend/src/constants/enums.py` → `ConsentChannel` | `frontend/site/js/config.js` → `ENUMS.consentChannel` |
+| 授权动作 `unsubscribed/opted_out/complained/subscribed` | `backend/src/constants/enums.py` → `ConsentAction` | `frontend/site/js/config.js` → `ENUMS.consentAction` |
+| 复核结论 `sendable/excluded`、会员来源 `base/backfill`、剔除原因 | `backend/src/constants/enums.py` → `ReviewStatus/MemberSource/ExcludeReason` | `frontend/site/js/config.js` → `ENUMS.reviewStatus/memberSource/excludeReason` |
 
 ## 12. Docker 说明
 

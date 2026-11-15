@@ -1,4 +1,4 @@
-"""CSV 导出：会员名单 / 分群表 / 名单明细（UTF-8 BOM）。"""
+"""CSV 导出：会员名单 / 分群表 / 名单明细 / 合规明细（UTF-8 BOM）。"""
 from __future__ import annotations
 
 from sqlalchemy import select
@@ -7,14 +7,20 @@ from sqlalchemy.orm import Session
 from src.constants.enums import (
     AUDIENCE_STATUS_LABELS,
     CAMPAIGN_STATUS_LABELS,
+    CONSENT_CHANNEL_LABELS,
+    EXCLUDE_REASON_LABELS,
+    MEMBER_SOURCE_LABELS,
     MEMBER_TIER_LABELS,
+    REVIEW_STATUS_LABELS,
     SEGMENT_LABELS,
 )
 from src.constants.limits import MAX_EXPORT_ROWS
 from src.models.audience import Audience
 from src.models.campaign import Campaign
+from src.models.compliance import AudienceMember
 from src.models.member import Member
 from src.models.segment import Segment
+from src.services import compliance_service
 from src.utils.csv_export import to_csv
 
 
@@ -116,6 +122,75 @@ def audience_csv(db: Session, audience_id: int | None = None) -> bytes:
                 if len(payload) >= MAX_EXPORT_ROWS:
                     return to_csv(headers, payload)
     return to_csv(headers, payload)
+
+
+def compliance_csv(db: Session, audience_id: int) -> bytes:
+    """合规明细：汇总 + 分渠道核对 + 会员级明细（可发 / 剔除 / 补位）。"""
+    audience = db.get(Audience, audience_id)
+    if audience is None:
+        from src.utils.errors import not_found
+
+        raise not_found("audience", audience_id)
+    campaign = db.get(Campaign, audience.campaign_id)
+    compliance = compliance_service.get_compliance(db, audience)
+    counts = compliance["counts"]
+    current = compliance.get("current_version")
+
+    rows = db.scalars(
+        select(AudienceMember).where(AudienceMember.audience_id == audience.id).order_by(AudienceMember.id)
+    ).all()
+    members = {}
+    if rows:
+        members = {
+            item.id: item
+            for item in db.scalars(select(Member).where(Member.id.in_({row.member_id for row in rows}))).all()
+        }
+
+    payload: list[list] = [
+        ["一、复核汇总"],
+        ["名单号", "活动", "名单状态", "发送渠道", "预算内人数", "可发", "剔除", "补位", "补位缺口", "当前发布版本"],
+        [
+            audience.audience_no,
+            campaign.name if campaign else "",
+            AUDIENCE_STATUS_LABELS.get(audience.status, audience.status),
+            CONSENT_CHANNEL_LABELS.get(compliance["send_channel"], compliance["send_channel"]),
+            compliance["target_count"],
+            counts["sendable"],
+            counts["excluded"],
+            counts["backfill"],
+            counts["shortage"],
+            f"v{current['version_no']}（{current['created_at'] or ''}）" if current else "未发布",
+        ],
+        [],
+        ["二、分渠道核对"],
+        ["渠道", "可发", "剔除"],
+    ]
+    for channel in ("sms", "app", "all"):
+        stat = compliance["channels"][channel]
+        payload.append([stat["channel_label"], stat["sendable"], stat["excluded"]])
+    payload += [
+        [],
+        ["三、会员明细"],
+        ["会员号", "姓名", "手机号", "分群", "来源", "短信渠道", "APP渠道", "复核结论", "剔除原因", "复核轮次"],
+    ]
+    for row in rows[:MAX_EXPORT_ROWS]:
+        member = members.get(row.member_id)
+        blocked = set(row.blocked_channels or [])
+        payload.append(
+            [
+                member.member_no if member else "",
+                member.name if member else "",
+                member.phone if member else "",
+                SEGMENT_LABELS.get(row.segment_code, row.segment_code),
+                MEMBER_SOURCE_LABELS.get(row.source, row.source),
+                "屏蔽" if {"sms", "all"} & blocked else "可发",
+                "屏蔽" if {"app", "all"} & blocked else "可发",
+                REVIEW_STATUS_LABELS.get(row.status, row.status),
+                EXCLUDE_REASON_LABELS.get(row.exclude_reason or "", "") if row.exclude_reason else "",
+                row.round_no,
+            ]
+        )
+    return to_csv([f"合规复核明细 {audience.audience_no}"], payload)
 
 
 def campaigns_csv(db: Session) -> bytes:

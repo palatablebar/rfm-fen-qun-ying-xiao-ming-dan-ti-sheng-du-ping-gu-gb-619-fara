@@ -131,3 +131,106 @@ TRIGGER_LABELS: dict[str, str] = {
     TriggerKind.SCHEDULE.value: "每日定时",
     TriggerKind.SEED.value: "初始化",
 }
+
+
+class ConsentChannel(StrEnum):
+    """授权事件渠道：短信 / APP 推送 / 全渠道（投诉名单按全渠道屏蔽）。"""
+
+    SMS = "sms"
+    APP = "app"
+    ALL = "all"
+
+
+CONSENT_CHANNEL_LABELS: dict[str, str] = {
+    ConsentChannel.SMS.value: "短信",
+    ConsentChannel.APP.value: "APP 推送",
+    ConsentChannel.ALL.value: "全渠道",
+}
+
+CONSENT_CHANNEL_ORDER: list[str] = [ConsentChannel.SMS.value, ConsentChannel.APP.value, ConsentChannel.ALL.value]
+
+
+class ConsentAction(StrEnum):
+    """授权事件动作：退订 / 关闭营销通知 / 投诉 / 恢复授权。"""
+
+    UNSUBSCRIBED = "unsubscribed"
+    OPTED_OUT = "opted_out"
+    COMPLAINED = "complained"
+    SUBSCRIBED = "subscribed"
+
+
+CONSENT_ACTION_LABELS: dict[str, str] = {
+    ConsentAction.UNSUBSCRIBED.value: "短信退订",
+    ConsentAction.OPTED_OUT.value: "APP 关闭营销通知",
+    ConsentAction.COMPLAINED.value: "投诉",
+    ConsentAction.SUBSCRIBED.value: "恢复授权",
+}
+
+
+class ConsentStatus(StrEnum):
+    """归并后的授权状态。"""
+
+    SENDABLE = "sendable"
+    BLOCKED = "blocked"
+
+
+CONSENT_STATUS_LABELS: dict[str, str] = {
+    ConsentStatus.SENDABLE.value: "可发",
+    ConsentStatus.BLOCKED.value: "屏蔽",
+}
+
+
+class EventDisposition(StrEnum):
+    """事件归并处置：生效 / 迟到忽略（不能恢复已退订）。"""
+
+    APPLIED = "applied"
+    LATE_IGNORED = "late_ignored"
+
+
+EVENT_DISPOSITION_LABELS: dict[str, str] = {
+    EventDisposition.APPLIED.value: "已生效",
+    EventDisposition.LATE_IGNORED.value: "迟到忽略",
+}
+
+
+class ReviewStatus(StrEnum):
+    """名单会员的复核结论。"""
+
+    SENDABLE = "sendable"
+    EXCLUDED = "excluded"
+
+
+REVIEW_STATUS_LABELS: dict[str, str] = {
+    ReviewStatus.SENDABLE.value: "可发",
+    ReviewStatus.EXCLUDED.value: "已剔除",
+}
+
+
+class MemberSource(StrEnum):
+    """名单会员来源：算法 B 原始分配 / 合规补位。"""
+
+    BASE = "base"
+    BACKFILL = "backfill"
+
+
+MEMBER_SOURCE_LABELS: dict[str, str] = {
+    MemberSource.BASE.value: "原始分配",
+    MemberSource.BACKFILL.value: "合规补位",
+}
+
+
+class ExcludeReason(StrEnum):
+    """剔除原因（按屏蔽动作优先级取主因）。"""
+
+    COMPLAINED = "complained"
+    MULTI_BLOCKED = "multi_blocked"
+    SMS_UNSUBSCRIBED = "sms_unsubscribed"
+    APP_OPTED_OUT = "app_opted_out"
+
+
+EXCLUDE_REASON_LABELS: dict[str, str] = {
+    ExcludeReason.COMPLAINED.value: "投诉黑名单",
+    ExcludeReason.MULTI_BLOCKED.value: "多渠道屏蔽",
+    ExcludeReason.SMS_UNSUBSCRIBED.value: "短信退订",
+    ExcludeReason.APP_OPTED_OUT.value: "APP 关闭营销通知",
+}

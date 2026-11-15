@@ -7,6 +7,7 @@ import overviewPage from './pages/overview.js';
 import membersPage from './pages/members.js';
 import segmentsPage from './pages/segments.js';
 import audiencesPage from './pages/audiences.js';
+import compliancePage from './pages/compliance.js';
 import exportsPage from './pages/exports.js';
 
 const routes = [
@@ -14,6 +15,7 @@ const routes = [
   { path: '#/members', page: membersPage, permission: 'member:read' },
   { path: '#/segments', page: segmentsPage, permission: 'segment:read' },
   { path: '#/audiences', page: audiencesPage, permission: 'audience:read' },
+  { path: '#/compliance', page: compliancePage, permission: 'compliance:read' },
   { path: '#/exports', page: exportsPage, permission: 'member:read' },
 ];
 

@@ -33,6 +33,7 @@ from scripts.demo_config import (
     CAMPAIGNS,
     CHANNELS,
     CITIES,
+    CONSENT_SEED,
     DEMO_PASSWORD,
     DEMO_USERS,
     GIVEN,
@@ -298,6 +299,138 @@ def ensure_audit(db) -> None:
     db.flush()
 
 
+def _build_consent_batches(member_nos: list[str]) -> list[tuple[str, list[dict]]]:
+    """构造三个到达批次的授权事件（确定性；event_time 为 UTC naive）。"""
+    day1 = datetime(2026, 11, 13, 1, 0)   # 业务时间 2026-11-13 09:00（UTC+8）
+    day2 = datetime(2026, 11, 14, 1, 0)   # 业务时间 2026-11-14 09:00（UTC+8）
+    late_day = datetime(2026, 11, 12, 1, 0)
+
+    def no_at(index: int) -> str:
+        return member_nos[index % len(member_nos)]
+
+    batch1: list[dict] = []
+    for seq, index in enumerate(range(0, len(member_nos), CONSENT_SEED["sms_stride"])):
+        batch1.append(
+            {
+                "event_id": f"SMS20261113{seq:04d}",
+                "member_no": no_at(index),
+                "channel": "sms",
+                "action": "unsubscribed",
+                "event_time": day1 + timedelta(minutes=seq),
+                "source": "sms_gateway",
+            }
+        )
+    for seq, index in enumerate(range(0, len(member_nos), CONSENT_SEED["app_stride"])):
+        batch1.append(
+            {
+                "event_id": f"APP20261113{seq:04d}",
+                "member_no": no_at(index),
+                "channel": "app",
+                "action": "opted_out",
+                "event_time": day1 + timedelta(hours=1, minutes=seq),
+                "source": "app_center",
+            }
+        )
+
+    batch2: list[dict] = []
+    for seq, index in enumerate(range(0, len(member_nos), CONSENT_SEED["complaint_stride"])):
+        batch2.append(
+            {
+                "event_id": f"CP20261114{seq:04d}",
+                "member_no": no_at(index),
+                "channel": "all",
+                "action": "complained",
+                "event_time": day2 + timedelta(minutes=seq),
+                "source": "complaint_desk",
+            }
+        )
+    for seq, index in enumerate(range(0, len(member_nos), CONSENT_SEED["sms2_stride"])):
+        batch2.append(
+            {
+                "event_id": f"SMS20261114{seq:04d}",
+                "member_no": no_at(index),
+                "channel": "sms",
+                "action": "unsubscribed",
+                "event_time": day2 + timedelta(hours=1, minutes=seq),
+                "source": "sms_gateway",
+            }
+        )
+
+    batch3: list[dict] = []
+    # 重复事件：原样重发批次1 的前 N 条（同 event_id）→ 幂等忽略
+    batch3.extend(dict(item) for item in batch1[: CONSENT_SEED["duplicate_count"]])
+    # 迟到恢复：event_time 早于退订时间 → 不能恢复已退订
+    for seq, index in enumerate(CONSENT_SEED["late_restore"]):
+        batch3.append(
+            {
+                "event_id": f"SMS20261114R{seq:04d}",
+                "member_no": no_at(index),
+                "channel": "sms",
+                "action": "subscribed",
+                "event_time": late_day + timedelta(minutes=seq),
+                "source": "sms_gateway",
+            }
+        )
+    # 有效恢复：event_time 更晚 → 恢复可发
+    for seq, index in enumerate(CONSENT_SEED["valid_restore"]):
+        batch3.append(
+            {
+                "event_id": f"SMS20261114V{seq:04d}",
+                "member_no": no_at(index),
+                "channel": "sms",
+                "action": "subscribed",
+                "event_time": day2 + timedelta(hours=2, minutes=seq),
+                "source": "sms_gateway",
+            }
+        )
+    return [("B20261113-1", batch1), ("B20261114-1", batch2), ("B20261114-2", batch3)]
+
+
+def ensure_consents(db) -> int:
+    from src.models.consent import ConsentEvent
+    from src.services import consent_service
+
+    if db.scalar(select(func.count()).select_from(ConsentEvent)):
+        return db.scalar(select(func.count()).select_from(ConsentEvent)) or 0
+    member_nos = [row[0] for row in db.execute(select(Member.member_no).order_by(Member.member_no)).all()]
+    if not member_nos:
+        return 0
+    for batch_no, events in _build_consent_batches(member_nos):
+        consent_service.import_events(db, batch_no=batch_no, events=events, operator_email="seed@rfmseg.io")
+    db.flush()
+    return db.scalar(select(func.count()).select_from(ConsentEvent)) or 0
+
+
+def ensure_compliance(db) -> None:
+    """首轮合规复核（pending 名单各复核一次；秋日名单发布 v1，演示「已排期活动照常下发」）。
+
+    幂等：只在还没有复核记录时执行；重跑 seed 不会重复补位或重复发布。
+    """
+    from src.models.audience import Audience
+    from src.models.compliance import AudienceMember, AudiencePublish
+    from src.services import compliance_service
+
+    audiences = db.scalars(select(Audience).order_by(Audience.id)).all()
+    for audience in audiences:
+        has_members = db.scalar(
+            select(func.count()).select_from(AudienceMember).where(AudienceMember.audience_id == audience.id)
+        )
+        if has_members:
+            continue
+        compliance_service.review_audience(
+            db, audience=audience, send_channel="all", reimport=True, operator_email="seed@rfmseg.io"
+        )
+        if audience.seed_key == "seed-audience-autumn":
+            has_version = db.scalar(
+                select(func.count()).select_from(AudiencePublish).where(AudiencePublish.audience_id == audience.id)
+            )
+            if not has_version:
+                compliance_service.publish_audience(
+                    db, audience=audience, operator_email="seed@rfmseg.io", note="init 首发版本"
+                )
+    db.flush()
+
+
 def seed_all() -> dict:
     from src.models.audience import Audience
 
@@ -308,6 +441,8 @@ def seed_all() -> dict:
         ensure_campaigns(db)
         ensure_audiences(db)
         ensure_audit(db)
+        ensure_consents(db)
+        ensure_compliance(db)
         audiences = db.scalar(select(func.count()).select_from(Audience)) or 0
         pending = db.scalar(select(func.count()).select_from(Audience).where(Audience.status == "pending")) or 0
         summary = (

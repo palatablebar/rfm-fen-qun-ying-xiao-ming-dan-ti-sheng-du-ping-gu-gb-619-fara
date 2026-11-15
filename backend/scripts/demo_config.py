@@ -92,3 +92,16 @@ SEED_AUDIENCES = [
     ("seed-audience-autumn", "autumn-member-day", "init 抽样名单：预算受限，按 lift/成本 贪心选群"),
     ("seed-audience-double11", "double11-warmup", "init 抽样名单：预算充足，覆盖全部可投分群"),
 ]
+
+# ---- 授权事件（发送前合规复核演示数据）----
+# 每天分批到达：短信退订 / APP 关闭营销通知 / 投诉名单；含迟到与重复事件样例。
+# 会员按固定步长抽样（确定性）；event_time 为 UTC naive（业务时间 UTC+8 减 8 小时）。
+CONSENT_SEED = {
+    "sms_stride": 137,        # 批次1 短信退订：idx % 137 == 0（约 59 人）
+    "app_stride": 173,        # 批次1 APP 关闭：idx % 173 == 0（约 47 人）
+    "complaint_stride": 997,  # 批次2 投诉名单：idx % 997 == 0（9 人，全渠道屏蔽）
+    "sms2_stride": 211,       # 批次2 追加短信退订：idx % 211 == 0（约 38 人）
+    "duplicate_count": 5,     # 批次3 原样重发批次1 的前 5 条（重复事件，幂等忽略）
+    "late_restore": [137, 274, 411],    # 批次3 迟到恢复：event_time 早于退订时间 → 不能恢复已退订
+    "valid_restore": [548, 685, 822],   # 批次3 有效恢复：event_time 更晚 → 恢复可发
+}

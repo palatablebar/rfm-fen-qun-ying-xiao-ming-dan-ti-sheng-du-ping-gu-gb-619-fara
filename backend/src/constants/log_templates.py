@@ -10,8 +10,12 @@ ACTIONS: dict[str, str] = {
     "campaign.update": "修改活动预算",
     "audience.generate": "生成营销名单",
     "audience.confirm": "确认名单",
+    "consent.import": "导入授权事件",
+    "compliance.review": "发送前合规复核",
+    "compliance.publish": "发布可发名单",
     "export.members": "导出会员名单",
     "export.segments": "导出分群表",
     "export.audiences": "导出名单明细",
+    "export.compliance": "导出合规明细",
     "http.mutation": "写请求",
 }
